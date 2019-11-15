@@ -18,6 +18,7 @@ package com.qmuiteam.qmuidemo.fragment.components;
 
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -72,6 +73,7 @@ public class QDPullRefreshFragment extends BaseFragment {
         initTopBar();
         initData();
 
+        mPullRefreshLayout.setToRefreshDirectly();//直接弹出加载视图
         return root;
     }
 
@@ -135,6 +137,7 @@ public class QDPullRefreshFragment extends BaseFragment {
 
             @Override
             public void onRefresh() {
+                Log.d("QDPullRefreshFragment", "onRefresh:");
                 mPullRefreshLayout.postDelayed(new Runnable() {
                     @Override
                     public void run() {
