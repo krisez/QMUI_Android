@@ -18,6 +18,7 @@ package com.qmuiteam.qmui.arch;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -265,7 +266,7 @@ public abstract class QMUIFragmentActivity extends InnerBaseActivity {
             if (toExec != null) {
                 if (toExec instanceof QMUIFragment) {
                     QMUIFragment mFragment = (QMUIFragment) toExec;
-                    startFragment(mFragment);
+                    startFragmentAndDestroyCurrent(mFragment, false);
                 } else if (toExec instanceof Intent) {
                     Intent intent = (Intent) toExec;
                     startActivity(intent);
@@ -357,8 +358,19 @@ public abstract class QMUIFragmentActivity extends InnerBaseActivity {
             super.onLayout(changed, left, top, right, bottom);
             for (int i = 0; i < getChildCount(); i++) {
                 SwipeBackLayout.updateLayoutInSwipeBack(getChildAt(i));
-
             }
+        }
+
+        @Override
+        public boolean applySystemWindowInsets21(Object insets) {
+            super.applySystemWindowInsets21(insets);
+            return true;
+        }
+
+        @Override
+        public boolean applySystemWindowInsets19(Rect insets) {
+            super.applySystemWindowInsets19(insets);
+            return true;
         }
     }
 }

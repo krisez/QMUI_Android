@@ -20,6 +20,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.arch.core.util.Function;
 import android.arch.lifecycle.LifecycleOwner;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.os.Bundle;
@@ -45,7 +46,9 @@ import com.qmuiteam.qmui.arch.annotation.DefaultFirstFragment;
 import com.qmuiteam.qmui.arch.annotation.LatestVisitRecord;
 import com.qmuiteam.qmui.arch.first.FirstFragmentFinder;
 import com.qmuiteam.qmui.arch.first.FirstFragmentFinders;
-import com.qmuiteam.qmui.arch.record.LatestVisitArgumentSaver;
+import com.qmuiteam.qmui.arch.record.LatestVisitArgumentCollector;
+import com.qmuiteam.qmui.arch.record.RecordArgumentEditor;
+import com.qmuiteam.qmui.util.QMUIDisplayHelper;
 import com.qmuiteam.qmui.util.QMUIKeyboardHelper;
 import com.qmuiteam.qmui.util.QMUIViewHelper;
 import com.qmuiteam.qmui.widget.QMUITopBar;
@@ -54,7 +57,14 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.qmuiteam.qmui.arch.SwipeBackLayout.DRAG_DIRECTION_BOTTOM_TO_TOP;
+import static com.qmuiteam.qmui.arch.SwipeBackLayout.DRAG_DIRECTION_LEFT_TO_RIGHT;
+import static com.qmuiteam.qmui.arch.SwipeBackLayout.DRAG_DIRECTION_RIGHT_TO_LEFT;
+import static com.qmuiteam.qmui.arch.SwipeBackLayout.DRAG_DIRECTION_TOP_TO_BOTTOM;
+import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_BOTTOM;
 import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_LEFT;
+import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_RIGHT;
+import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_TOP;
 
 /**
  * With the use of {@link QMUIFragmentActivity}, {@link QMUIFragment} brings more features,
@@ -63,7 +73,7 @@ import static com.qmuiteam.qmui.arch.SwipeBackLayout.EDGE_LEFT;
  * Created by cgspine on 15/9/14.
  */
 public abstract class QMUIFragment extends Fragment implements
-        QMUIFragmentLazyLifecycleOwner.Callback, LatestVisitArgumentSaver {
+        QMUIFragmentLazyLifecycleOwner.Callback, LatestVisitArgumentCollector {
     static final String SWIPE_BACK_VIEW = "swipe_back_view";
     private static final String TAG = QMUIFragment.class.getSimpleName();
 
@@ -152,7 +162,7 @@ public abstract class QMUIFragment extends Fragment implements
     private void checkLatestVisitRecord() {
         Class<? extends QMUIFragment> cls = getClass();
         Activity activity = getActivity();
-        if(getParentFragment() != null || !(activity instanceof QMUIFragmentActivity)){
+        if (getParentFragment() != null || !(activity instanceof QMUIFragmentActivity)) {
             return;
         }
         if (!cls.isAnnotationPresent(LatestVisitRecord.class)) {
@@ -163,7 +173,8 @@ public abstract class QMUIFragment extends Fragment implements
             throw new RuntimeException(String.format("Can not perform LatestVisitRecord, " +
                     "%s must be annotated by LatestVisitRecord", activity.getClass().getSimpleName()));
         }
-        if (activity.getClass().getAnnotation(DefaultFirstFragment.class) != null) {
+        DefaultFirstFragment defaultFirstFragment = activity.getClass().getAnnotation(DefaultFirstFragment.class);
+        if (defaultFirstFragment != null && defaultFirstFragment.value() == getClass()) {
             QMUILatestVisit.getInstance(getContext()).performLatestVisitRecord(this);
         } else {
             QMUIFragmentActivity qActivity = (QMUIFragmentActivity) activity;
@@ -179,8 +190,8 @@ public abstract class QMUIFragment extends Fragment implements
 
 
     @Override
-    public Object getArgumentValueForLatestVisit(String argumentName) {
-        return null;
+    public void onCollectLatestVisitArgument(RecordArgumentEditor editor) {
+
     }
 
     protected void startFragmentAndDestroyCurrent(QMUIFragment fragment) {
@@ -361,14 +372,15 @@ public abstract class QMUIFragment extends Fragment implements
         } else {
             rootView.setFitsSystemWindows(true);
         }
-        final SwipeBackLayout swipeBackLayout = SwipeBackLayout.wrap(rootView, dragBackEdge(),
+        final SwipeBackLayout swipeBackLayout = SwipeBackLayout.wrap(rootView, dragBackDirection(),
+                dragViewMoveAction(),
                 new SwipeBackLayout.Callback() {
                     @Override
-                    public boolean canSwipeBack() {
+                    public boolean canSwipeBack(SwipeBackLayout layout, int dragDirection, int moveEdge) {
                         if (mEnterAnimationStatus != ANIMATION_ENTER_STATUS_END) {
                             return false;
                         }
-                        if (!canDragBack()) {
+                        if (!canDragBack(layout.getContext(), dragDirection, moveEdge)) {
                             return false;
                         }
 
@@ -395,6 +407,11 @@ public abstract class QMUIFragment extends Fragment implements
                             return QMUISwipeBackActivityManager.getInstance().canSwipeBack();
                         }
                         return true;
+                    }
+
+                    @Override
+                    public boolean shouldBeginDrag(SwipeBackLayout swipeBackLayout, float downX, float downY, int dragDirection) {
+                        return QMUIFragment.this.shouldBeginDrag(swipeBackLayout, downX, downY, dragDirection);
                     }
                 });
         mListenerRemover = swipeBackLayout.addSwipeListener(mSwipeListener);
@@ -476,27 +493,28 @@ public abstract class QMUIFragment extends Fragment implements
         }
 
         @Override
-        public void onScroll(int edgeFlag, float scrollPercent) {
+        public void onScroll(int dragDirection, int moveEdge, float scrollPercent) {
             scrollPercent = Math.max(0f, Math.min(1f, scrollPercent));
-            int targetOffset = (int) (Math.abs(backViewInitOffset()) * (1 - scrollPercent));
             ViewGroup container = getBaseFragmentActivity().getFragmentContainer();
+            int targetOffset = (int) (Math.abs(
+                    backViewInitOffset(container.getContext(), dragDirection, moveEdge)) * (1 - scrollPercent));
             int childCount = container.getChildCount();
             for (int i = childCount - 1; i >= 0; i--) {
                 View view = container.getChildAt(i);
                 Object tag = view.getTag(R.id.qmui_arch_swipe_layout_in_back);
                 if (SWIPE_BACK_VIEW.equals(tag)) {
-                    SwipeBackLayout.offsetInSwipeBack(view, edgeFlag, targetOffset);
+                    SwipeBackLayout.offsetInSwipeBack(view, moveEdge, targetOffset);
                 }
             }
             if (mSwipeBackgroundView != null) {
-                SwipeBackLayout.offsetInSwipeBack(mSwipeBackgroundView, edgeFlag, targetOffset);
+                SwipeBackLayout.offsetInSwipeBack(mSwipeBackgroundView, moveEdge, targetOffset);
             }
         }
 
         @SuppressLint("PrivateApi")
         @Override
-        public void onEdgeTouch(final int edgeFlag) {
-            Log.i(TAG, "SwipeListener:onEdgeTouch: edgeFlag = " + edgeFlag);
+        public void onSwipeBackBegin(final int dragDirection, final int moveEdge) {
+            Log.i(TAG, "SwipeListener:onSwipeBackBegin: moveEdge = " + moveEdge);
             FragmentManager fragmentManager = getFragmentManager();
             if (fragmentManager == null) {
                 return;
@@ -536,8 +554,8 @@ public abstract class QMUIFragment extends Fragment implements
                                         if (baseView != null) {
                                             addViewInSwipeBack(container, baseView, 0);
                                             handleChildFragmentListWhenSwipeBackStart(mModifiedFragment, baseView);
-                                            SwipeBackLayout.offsetInSwipeBack(baseView, edgeFlag,
-                                                    Math.abs(backViewInitOffset()));
+                                            SwipeBackLayout.offsetInSwipeBack(baseView, moveEdge,
+                                                    Math.abs(backViewInitOffset(baseView.getContext(), dragDirection, moveEdge)));
                                         }
                                     }
                                 }
@@ -572,8 +590,8 @@ public abstract class QMUIFragment extends Fragment implements
                                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                     }
                     mSwipeBackgroundView.bind(prevActivity, currentActivity, restoreSubWindowWhenDragBack());
-                    SwipeBackLayout.offsetInSwipeBack(mSwipeBackgroundView, edgeFlag,
-                            Math.abs(backViewInitOffset()));
+                    SwipeBackLayout.offsetInSwipeBack(mSwipeBackgroundView, moveEdge,
+                            Math.abs(backViewInitOffset(decorView.getContext(), dragDirection, moveEdge)));
                 }
             }
         }
@@ -759,7 +777,7 @@ public abstract class QMUIFragment extends Fragment implements
      *
      * @param cls the target fragment class type
      */
-    protected void popBackStack(Class<QMUIFragment> cls) {
+    protected void popBackStack(Class<? extends QMUIFragment> cls) {
         if (checkPopBack()) {
             getBaseFragmentActivity().popBackStack(cls);
         }
@@ -770,7 +788,7 @@ public abstract class QMUIFragment extends Fragment implements
      *
      * @param cls the target fragment class type
      */
-    protected void popBackStackInclusive(Class<QMUIFragment> cls) {
+    protected void popBackStackInclusive(Class<? extends QMUIFragment> cls) {
         if (checkPopBack()) {
             getBaseFragmentActivity().popBackStackInclusive(cls);
         }
@@ -784,7 +802,7 @@ public abstract class QMUIFragment extends Fragment implements
     }
 
     protected void popBackStackAfterResume() {
-        if (isResumed() && mEnterAnimationStatus != ANIMATION_ENTER_STATUS_END) {
+        if (isResumed() && mEnterAnimationStatus == ANIMATION_ENTER_STATUS_END) {
             popBackStack();
         } else {
             runAfterAnimation(new Runnable() {
@@ -926,16 +944,29 @@ public abstract class QMUIFragment extends Fragment implements
      * disable or enable drag back
      *
      * @return if true open dragBack, otherwise close dragBack
+     * @deprecated Use {@link #canDragBack(Context, int, int)}
      */
+    @Deprecated
     protected boolean canDragBack() {
         return true;
     }
 
+
+    protected boolean canDragBack(Context context, int dragDirection, int moveEdge) {
+        return canDragBack();
+    }
+
     /**
      * @return the init offset for backView for Parallax scrolling
+     * @deprecated Use {@link #backViewInitOffset(Context, int, int)}
      */
+    @Deprecated
     protected int backViewInitOffset() {
         return 0;
+    }
+
+    protected int backViewInitOffset(Context context, int dragDirection, int moveEdge) {
+        return backViewInitOffset();
     }
 
     /**
@@ -945,8 +976,44 @@ public abstract class QMUIFragment extends Fragment implements
 
     }
 
+    /**
+     * @return
+     * @deprecated Use {@link #dragBackDirection()}
+     */
+    @Deprecated
     protected int dragBackEdge() {
         return EDGE_LEFT;
+    }
+
+    protected int dragBackDirection() {
+        int oldEdge = dragBackEdge();
+        if (oldEdge == EDGE_RIGHT) {
+            return SwipeBackLayout.DRAG_DIRECTION_RIGHT_TO_LEFT;
+        } else if (oldEdge == EDGE_TOP) {
+            return SwipeBackLayout.DRAG_DIRECTION_TOP_TO_BOTTOM;
+        } else if (oldEdge == EDGE_BOTTOM) {
+            return SwipeBackLayout.DRAG_DIRECTION_BOTTOM_TO_TOP;
+        }
+        return SwipeBackLayout.DRAG_DIRECTION_LEFT_TO_RIGHT;
+    }
+
+    protected SwipeBackLayout.ViewMoveAction dragViewMoveAction() {
+        return SwipeBackLayout.MOVE_VIEW_AUTO;
+    }
+
+    protected boolean shouldBeginDrag(SwipeBackLayout swipeBackLayout,
+                                      float downX, float downY, int dragDirection) {
+        int edgeSize = QMUIDisplayHelper.dp2px(swipeBackLayout.getContext(), 20);
+        if (dragDirection == DRAG_DIRECTION_LEFT_TO_RIGHT) {
+            return downX < edgeSize;
+        } else if (dragDirection == DRAG_DIRECTION_RIGHT_TO_LEFT) {
+            return downX > swipeBackLayout.getWidth() - edgeSize;
+        } else if (dragDirection == DRAG_DIRECTION_TOP_TO_BOTTOM) {
+            return downY < edgeSize;
+        } else if (dragDirection == DRAG_DIRECTION_BOTTOM_TO_TOP) {
+            return downY > swipeBackLayout.getHeight() - edgeSize;
+        }
+        return true;
     }
 
     /**

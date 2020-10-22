@@ -1,14 +1,8 @@
 package com.qmuiteam.qmui.arch;
 
 import com.google.auto.service.AutoService;
-import com.qmuiteam.qmui.arch.annotation.BoolArgument;
-import com.qmuiteam.qmui.arch.annotation.FloatArgument;
-import com.qmuiteam.qmui.arch.annotation.IntArgument;
 import com.qmuiteam.qmui.arch.annotation.LatestVisitRecord;
-import com.qmuiteam.qmui.arch.annotation.LongArgument;
-import com.qmuiteam.qmui.arch.annotation.StringArgument;
 import com.squareup.javapoet.ClassName;
-import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
@@ -18,6 +12,7 @@ import com.squareup.javapoet.TypeSpec;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -30,22 +25,16 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 
-import javafx.util.Pair;
-
 @AutoService(Processor.class)
 public class LatestVisitProcessor extends BaseProcessor {
 
-    private static ClassName RecordMetaMapName = ClassName.get(
-            "com.qmuiteam.qmui.arch.record", "RecordMetaMap");
-    private static ClassName RecordMetaName = ClassName.get(
-            "com.qmuiteam.qmui.arch.record", "RecordMeta");
-    private static ClassName RecordMetaArgumentName = ClassName.get(
-            "com.qmuiteam.qmui.arch.record", "RecordMeta.ArgumentType");
+    private static ClassName RecordIdClassMap = ClassName.get(
+            "com.qmuiteam.qmui.arch.record", "RecordIdClassMap");
 
     private static TypeName MapByClassName = ParameterizedTypeName.get(MapName,
-            OriginClassName, RecordMetaName);
+            OriginClassName, IntegerName);
     private static TypeName MapByIdName = ParameterizedTypeName.get(MapName,
-            IntegerName, RecordMetaName);
+            IntegerName, OriginClassName);
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
@@ -54,23 +43,23 @@ public class LatestVisitProcessor extends BaseProcessor {
             return true;
         }
         TypeSpec.Builder classBuilder = TypeSpec
-                .classBuilder("RecordMetaMapImpl")
+                .classBuilder(RecordIdClassMap.simpleName() + "Impl")
                 .addModifiers(Modifier.PUBLIC)
-                .addSuperinterface(RecordMetaMapName);
-        classBuilder.addField(FieldSpec.builder(MapByClassName, "mMapByClass")
+                .addSuperinterface(RecordIdClassMap);
+        classBuilder.addField(FieldSpec.builder(MapByClassName, "mClassToIdMap")
                 .addModifiers(Modifier.PRIVATE)
                 .build());
 
-        classBuilder.addField(FieldSpec.builder(MapByIdName, "mMapById")
+        classBuilder.addField(FieldSpec.builder(MapByIdName, "mIdToClassMap")
                 .addModifiers(Modifier.PRIVATE)
                 .build());
 
         MethodSpec.Builder constructorBuilder = MethodSpec.constructorBuilder()
                 .addModifiers(Modifier.PUBLIC)
-                .addStatement("mMapByClass = new $T<>()", HashMapName)
-                .addStatement("mMapById = new $T<>()", HashMapName);
+                .addStatement("mClassToIdMap = new $T<>()", HashMapName)
+                .addStatement("mIdToClassMap = new $T<>()", HashMapName);
 
-        int currentId = 1000;
+        HashMap<Integer, String> hashCodes = new HashMap<>();
         for (Element element : elements) {
             if (element instanceof TypeElement) {
                 TypeElement classElement = (TypeElement) element;
@@ -79,94 +68,46 @@ public class LatestVisitProcessor extends BaseProcessor {
                         || isSubtypeOfType(elementType, QMUI_FRAGMENT_TYPE)
                         || isSubtypeOfType(elementType, QMUI_ACTIVITY_TYPE)) {
                     ClassName elementName = ClassName.get(classElement);
-                    List<Pair<String, String>> nameAndTypeList = new ArrayList<>();
-                    BoolArgument boolAnnotation = element.getAnnotation(BoolArgument.class);
-                    if (boolAnnotation != null) {
-                        for (String name : boolAnnotation.names()) {
-                            nameAndTypeList.add(new Pair<>(name, "Boolean"));
+                    String simpleName = elementName.simpleName();
+                    int hashCode = simpleName.hashCode();
+                    if(hashCodes.keySet().contains(hashCode)){
+                        if(hashCodes.keySet().contains(hashCode)){
+                            error(element, "The hashCode of " + simpleName + " conflict with "
+                                    + hashCodes.get(hashCode) + "; Please consider changing the class name");
+                            continue;
                         }
                     }
-                    FloatArgument floatArguments = element.getAnnotation(FloatArgument.class);
-                    if (floatArguments != null) {
-                        for (String name : floatArguments.names()) {
-                            nameAndTypeList.add(new Pair<>(name, "Float"));
-                        }
-                    }
-                    LongArgument longArguments = element.getAnnotation(LongArgument.class);
-                    if (longArguments != null) {
-                        for (String name : longArguments.names()) {
-                            nameAndTypeList.add(new Pair<>(name, "Long"));
-                        }
-                    }
-                    IntArgument intArguments = element.getAnnotation(IntArgument.class);
-                    if (intArguments != null) {
-                        for (String name : intArguments.names()) {
-                            nameAndTypeList.add(new Pair<>(name, "Integer"));
-                        }
-                    }
-                    StringArgument stringArguments = element.getAnnotation(StringArgument.class);
-                    if (stringArguments != null) {
-                        for (String name : stringArguments.names()) {
-                            nameAndTypeList.add(new Pair<>(name, "String"));
-                        }
-                    }
+                    hashCodes.put(hashCode, simpleName);
 
-
-                    if (nameAndTypeList.size() == 0) {
-                        constructorBuilder.addStatement("$T record$L = new $T($L, $T.class, null)",
-                                RecordMetaName, currentId, RecordMetaName, currentId, elementName);
-                    } else {
-                        CodeBlock.Builder builder = CodeBlock.builder();
-                        builder.add("$T record$L = new $T($L, $T.class, new $T[]{\n",
-                                RecordMetaName, currentId, RecordMetaName, currentId,
-                                elementName, RecordMetaArgumentName);
-                        builder.indent();
-                        String name;
-                        String type;
-                        for (int i = 0; i < nameAndTypeList.size(); i++) {
-                            name = nameAndTypeList.get(i).getKey();
-                            type = nameAndTypeList.get(i).getValue();
-                            builder.add("new $T($S, $L.class)", RecordMetaArgumentName, name, type);
-                            if (i < nameAndTypeList.size() - 1) {
-                                builder.add(",\n");
-                            }
-
-                        }
-                        builder.unindent();
-                        builder.add("\n});");
-                        constructorBuilder.addStatement(builder.build());
-                    }
-
-                    constructorBuilder.addStatement("mMapByClass.put($T.class, record$L)",
+                    constructorBuilder.addStatement("mClassToIdMap.put($T.class, $L)",
                             elementName,
-                            currentId);
-                    constructorBuilder.addStatement("mMapById.put($L, record$L)",
-                            currentId,
-                            currentId);
-                    currentId++;
+                            hashCode);
+                    constructorBuilder.addStatement("mIdToClassMap.put($L, $T.class)",
+                            hashCode,
+                            elementName);
                 } else {
                     error(element, "Must annotated on subclasses of QMUIFragmentActivity");
                 }
             }
         }
 
-        ExecutableElement iGetRecordMetaById = getOverrideMethod(
-                RecordMetaMapName, "getRecordMetaById");
-        MethodSpec.Builder getRecordMetaById = MethodSpec.overriding(iGetRecordMetaById)
-                .addStatement("return mMapById.get($L)",
-                        iGetRecordMetaById.getParameters().get(0).getSimpleName().toString());
-        ExecutableElement iGetRecordMetaByClass = getOverrideMethod(
-                RecordMetaMapName, "getRecordMetaByClass");
-        MethodSpec.Builder getRecordMetaByClass = MethodSpec.overriding(iGetRecordMetaByClass)
-                .addStatement("return mMapByClass.get($L)",
-                        iGetRecordMetaByClass.getParameters().get(0).getSimpleName().toString());
+        ExecutableElement iGetClassById = getOverrideMethod(
+                RecordIdClassMap, "getRecordClassById");
+        MethodSpec.Builder getRecordMetaById = MethodSpec.overriding(iGetClassById)
+                .addStatement("return mIdToClassMap.get($L)",
+                        iGetClassById.getParameters().get(0).getSimpleName().toString());
+        ExecutableElement iGetIdByClass = getOverrideMethod(
+                RecordIdClassMap, "getIdByRecordClass");
+        MethodSpec.Builder getRecordMetaByClass = MethodSpec.overriding(iGetIdByClass)
+                .addStatement("return mClassToIdMap.get($L)",
+                        iGetIdByClass.getParameters().get(0).getSimpleName().toString());
 
         classBuilder
                 .addMethod(constructorBuilder.build())
                 .addMethod(getRecordMetaById.build())
                 .addMethod(getRecordMetaByClass.build());
         try {
-            JavaFile.builder(RecordMetaMapName.packageName(), classBuilder.build())
+            JavaFile.builder(RecordIdClassMap.packageName(), classBuilder.build())
                     .build().writeTo(mFiler);
         } catch (IOException e) {
             error(null, "Unable to generate RecordMetaMapImpl: %s", e.getMessage());
